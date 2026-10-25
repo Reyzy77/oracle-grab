@@ -1,0 +1,54 @@
+name: oracle-grab
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"   # minimum autorise par GitHub Actions
+  workflow_dispatch:
+
+concurrency:
+  group: oracle-grab
+  cancel-in-progress: false
+
+jobs:
+  try:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+
+      - name: Sonder la capacite et lancer des qu'elle apparait
+        env:
+          OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
+          OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+          OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+          OCI_REGION: ${{ secrets.OCI_REGION }}
+          OCI_KEY_CONTENT: ${{ secrets.OCI_KEY_CONTENT }}
+          OCI_COMPARTMENT_OCID: ${{ secrets.OCI_COMPARTMENT_OCID }}
+          OCI_SUBNET_OCID: ${{ secrets.OCI_SUBNET_OCID }}
+          OCI_IMAGE_OCID: ${{ secrets.OCI_IMAGE_OCID }}
+          OCI_SSH_PUBLIC_KEY: ${{ secrets.OCI_SSH_PUBLIC_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          OCI_SHAPE: ${{ vars.OCI_SHAPE || 'VM.Standard.A1.Flex' }}
+          OCI_OCPUS: ${{ vars.OCI_OCPUS || '4' }}
+          OCI_MEMORY_GB: ${{ vars.OCI_MEMORY_GB || '24' }}
+          OCI_DISPLAY_NAME: ${{ vars.OCI_DISPLAY_NAME || 'free-arm-1' }}
+          TRY_SMALLER_SHAPES: ${{ vars.TRY_SMALLER_SHAPES || 'true' }}
+          FALLBACK_TO_MICRO: ${{ vars.FALLBACK_TO_MICRO || 'false' }}
+          PROBE_INTERVAL_SECONDS: "45"
+          # Le run sonde en continu pendant ~5 min, puis rend la main au cron
+          # suivant : la couverture est quasi permanente.
+          MAX_RUNTIME_SECONDS: "300"
+        run: |
+          set +e
+          python oci_grab.py run
+          code=$?
+          echo "exit=$code"
+          # 0 = machine obtenue, 1 = pas de capacite (normal), >=2 = a regarder
+          [ "$code" = "1" ] && exit 0
+          exit $code
