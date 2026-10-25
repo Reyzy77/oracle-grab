@@ -425,24 +425,36 @@ class Grabber:
 
     # ----- sonde de capacite ---------------------------------------------- #
 
-    def probe(self, ad: str, target: Target) -> str | None:
+    def probe(self, ad: str, target: Target) -> list[str | None]:
         """
-        Retourne le fault domain disponible ('' = n'importe lequel), ou None.
-        N'utilise pas le quota LaunchInstance : c'est tout l'interet.
+        Fault domains ou la capacite est disponible, le plus fourni en premier.
+        [] = rien de libre. None dans la liste = AD sans FD precis.
+
+        Un seul appel couvre tous les fault domains, et n'entame pas le quota
+        LaunchInstance : c'est tout l'interet.
         """
         if not self.probe_supported:
-            return None
-        try:
-            models = oci.core.models
-            shape_av = models.CreateCapacityReportShapeAvailabilityDetails(instance_shape=target.shape)
+            return []
+        models = oci.core.models
+
+        def entry(fd: str | None):
+            sa = models.CreateCapacityReportShapeAvailabilityDetails(instance_shape=target.shape)
+            if fd:
+                sa.fault_domain = fd
             if target.is_flex:
-                shape_av.instance_shape_config = models.CapacityReportInstanceShapeConfig(
+                sa.instance_shape_config = models.CapacityReportInstanceShapeConfig(
                     ocpus=target.ocpus, memory_in_gbs=target.memory_gb
                 )
+            return sa
+
+        fds = self.fault_domains(ad)
+        entries = [entry(fd) for fd in fds] if fds else [entry(None)]
+
+        try:
             details = models.CreateComputeCapacityReportDetails(
                 compartment_id=self.st.compartment_id,
                 availability_domain=ad,
-                shape_availabilities=[shape_av],
+                shape_availabilities=entries,
             )
             self.probe_pacer.wait()
             report = self.compute.create_compute_capacity_report(details).data
@@ -451,17 +463,19 @@ class Grabber:
                 raise
             log(f"sonde de capacite indisponible ({exc.code}), passage en mode aveugle", "warn")
             self.probe_supported = False
-            return None
+            return []
         except Exception as exc:  # SDK trop ancien, modele absent...  # noqa: BLE001
             log(f"sonde de capacite non supportee ({type(exc).__name__}), mode aveugle", "warn")
             self.probe_supported = False
-            return None
+            return []
 
+        found: list[tuple[int, str | None]] = []
         for av in report.shape_availabilities or []:
-            status = (getattr(av, "availability_status", "") or "").upper()
-            if status == "AVAILABLE":
-                return getattr(av, "fault_domain", None) or ""
-        return None
+            if (getattr(av, "availability_status", "") or "").upper() == "AVAILABLE":
+                count = getattr(av, "available_count", None) or 0
+                found.append((count, getattr(av, "fault_domain", None)))
+        found.sort(key=lambda item: -item[0])        # le FD le plus fourni d'abord
+        return [fd for _, fd in found]
 
     # ----- lancement ------------------------------------------------------ #
 
@@ -570,18 +584,19 @@ def cmd_probe(g: Grabber | None = None, ads: list[str] | None = None) -> int:
     for target in targets:
         for ad in ads:
             try:
-                fd = g.probe(ad, target)
+                available = g.probe(ad, target)
             except oci.exceptions.ServiceError as exc:
                 log(f"rate limit sur la sonde : {exc.code}", "warn")
                 return 1
             if not g.probe_supported:
                 log("sonde non disponible sur ce tenancy/SDK", "warn")
                 return 1
-            mark = "DISPONIBLE" if fd is not None else "plein"
-            lvl = "ok" if fd is not None else "info"
-            suffix = f" (fd {fd})" if fd else ""
-            log(f"{str(target):<32} {ad.split(':')[-1]:<18} {mark}{suffix}", lvl)
-            found = found or fd is not None
+            mark = "DISPONIBLE" if available else "plein"
+            suffix = " (fd " + ", ".join(fd.split("-")[-1] if fd else "ad" for fd in available) + ")" \
+                if available else ""
+            log(f"{str(target):<32} {ad.split(':')[-1]:<18} {mark}{suffix}",
+                "ok" if available else "info")
+            found = found or bool(available)
     return 0 if found else 1
 
 
@@ -599,18 +614,19 @@ def cycle(g: Grabber, ads: list[str], targets: list[Target], dry_run: bool):
 
             if not blind:
                 try:
-                    fd = g.probe(ad, target)
+                    available = g.probe(ad, target)
                 except oci.exceptions.ServiceError as exc:
                     wait = retry_after(exc, 120)
                     log(f"rate limit sur la sonde -> pause {wait}s", "warn")
                     time.sleep(wait)
                     continue
                 if g.probe_supported:
-                    if fd is None:
+                    if not available:
                         log(f"{str(target):<32} {ad.split(':')[-1]:<18} plein")
                         continue
-                    log(f"CAPACITE DISPO : {target} dans {ad}{' fd=' + fd if fd else ''}", "ok")
-                    fds = [fd or None]
+                    where = ", ".join(fd.split("-")[-1] if fd else "ad" for fd in available)
+                    log(f"CAPACITE DISPO : {target} dans {ad} (fd {where})", "ok")
+                    fds = available
                 else:
                     blind = True
 
@@ -720,6 +736,9 @@ def cmd_run(once: bool = False, dry_run: bool = False) -> int:
 
 def main() -> int:
     args = sys.argv[1:]
+    if args and args[0] in ("-h", "--help", "help"):
+        print(__doc__)
+        return 0
     cmd = args[0] if args and not args[0].startswith("-") else "run"
     if cmd == "discover":
         return cmd_discover()
