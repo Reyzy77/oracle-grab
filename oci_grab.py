@@ -59,8 +59,28 @@ def log(msg: str, level: str = "info") -> None:
 # Configuration
 # --------------------------------------------------------------------------- #
 
+# Noms alternatifs acceptes, pour rester compatible avec les secrets
+# deja en place sur d'autres scripts Oracle.
+ALIASES = {
+    "OCI_USER_OCID": ("OCI_USER",),
+    "OCI_TENANCY_OCID": ("OCI_TENANCY",),
+    "OCI_KEY_CONTENT": ("OCI_KEY", "OCI_PRIVATE_KEY"),
+    "OCI_SUBNET_OCID": ("OCI_SUBNET",),
+    "OCI_IMAGE_OCID": ("OCI_IMAGE",),
+    "OCI_COMPARTMENT_OCID": ("OCI_COMPARTMENT",),
+    "OCI_SSH_PUBLIC_KEY": ("SSH_PUBKEY", "OCI_SSH_KEY"),
+}
+
+
 def env(name: str, default: str | None = None, required: bool = False) -> str | None:
-    val = os.environ.get(name, default)
+    val = os.environ.get(name)
+    if not val:
+        for alias in ALIASES.get(name, ()):
+            val = os.environ.get(alias)
+            if val:
+                break
+    if not val:
+        val = default
     if val is not None:
         val = val.strip()
     if required and not val:
