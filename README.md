@@ -80,7 +80,9 @@ python oci_grab.py run          # boucle jusqu'à obtenir la machine
 python oci_grab.py run --once   # un cycle borné (cron)
 ```
 
-Codes de sortie : `0` obtenue · `1` pas de capacité · `2` max tentatives · `3` quota · `4` auth · `5` autre.
+Codes de sortie : `0` obtenue · `1` pas de capacité · `2` max tentatives · `3` quota · `4` auth ·
+`5` autre · `6` config invalide. Le workflow ne considère que `1` comme normal, donc une erreur de
+config ou de quota fait passer le run au rouge au lieu de passer inaperçue.
 
 ### Docker
 ```bash

@@ -72,6 +72,15 @@ ALIASES = {
 }
 
 
+EXIT_CONFIG = 6
+
+
+def die_config(msg: str):
+    """Sortie distincte de 'pas de capacite' (1), pour que la CI passe au rouge."""
+    print(f"[config] {msg}", file=sys.stderr, flush=True)
+    sys.exit(EXIT_CONFIG)
+
+
 def env(name: str, default: str | None = None, required: bool = False) -> str | None:
     val = os.environ.get(name)
     if not val:
@@ -84,7 +93,7 @@ def env(name: str, default: str | None = None, required: bool = False) -> str | 
     if val is not None:
         val = val.strip()
     if required and not val:
-        sys.exit(f"[config] variable d'environnement manquante : {name}")
+        die_config(f"variable d'environnement manquante : {name}")
     return val
 
 
@@ -364,7 +373,7 @@ class Grabber:
         public = [s for s in subnets if not s.prohibit_public_ip_on_vnic]
         chosen = (public or subnets)
         if not chosen:
-            sys.exit("[config] aucun subnet trouve : cree un VCN avec un subnet public d'abord")
+            die_config("aucun subnet trouve : cree un VCN avec un subnet public d'abord")
         log(f"subnet auto-detecte : {chosen[0].display_name}")
         self.st.subnet_id = chosen[0].id
         return chosen[0].id
@@ -391,7 +400,7 @@ class Grabber:
                 log(f"image auto-detectee pour {shape} : {imgs[0].display_name}")
                 self._image_cache[shape] = imgs[0].id
                 return imgs[0].id
-        sys.exit(f"[config] aucune image trouvee pour {shape} : renseigne OCI_IMAGE_OCID")
+        die_config(f"aucune image trouvee pour {shape} : renseigne OCI_IMAGE_OCID")
 
     # ----- quota ---------------------------------------------------------- #
 
